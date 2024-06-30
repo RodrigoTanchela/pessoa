@@ -1,0 +1,55 @@
+name: CI/CD para Pessoa
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3.2.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4.2.1
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+
+      - name: Build pessoa jar
+        working-directory: ./pessoa
+        run: mvn clean package -DskipTests
+
+      - name: Docker Compose Build
+        working-directory: .
+        run: docker compose build pessoa
+
+      - name: Push to Docker Hub
+        run: |
+          docker tag ${{ secrets.DOCKER_USERNAME }}/pessoa:latest ${{ secrets.DOCKER_USERNAME }}/pessoa:${{github.run_id}}
+          docker push ${{ secrets.DOCKER_USERNAME }}/pessoa:${{github.run_id}}
+          docker push ${{ secrets.DOCKER_USERNAME }}/pessoa:latest
+
+  deploy:
+    needs: build
+    runs-on: self-hosted
+    steps:
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Deploy Pessoa
+        run: |
+          docker pull rodrigodocker158/pessoa:latest
+          docker rm -f pessoa || true
+          docker run -d -p 8700:8700 \
+            -e SPRING_DATASOURCE_URL=jdbc:postgresql://pessoa-db:5432/pessoa \
+            -e SPRING_DATASOURCE_USERNAME=postgres \
+            -e SPRING_DATASOURCE_PASSWORD=${{ secrets.DATABASE_PASSWORD }} \
+            -e EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://naming-server:8761/eureka \
+            --name pessoa \
+            rodrigodocker158/pessoa:latest
